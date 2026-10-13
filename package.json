@@ -1,0 +1,19 @@
+{
+  "name": "portfolio-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Serverless API backend for portfolio: GitHub proxy, Supabase-backed posts, admin auth, photo uploads, CORS.",
+  "scripts": {
+    "dev": "node scripts/watch.mjs",
+    "serve": "node scripts/dev.mjs",
+    "test": "node scripts/test-api.mjs",
+    "seed:posts": "node scripts/seed-posts.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "chokidar": "^5.0.0"
+  }
+}

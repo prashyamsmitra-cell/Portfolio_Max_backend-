@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+uploads/*
+!uploads/.gitkeep
+data/posts.json
+.DS_Store
+*.tmp
