@@ -21,7 +21,7 @@ let queued = null;
 let timer = null;
 
 const start = () => {
-  child = spawn(process.execPath, [entry], { stdio: 'inherit', env: process.env });
+  child = spawn(process.execPath, [entry], { stdio: 'inherit', env: { ...process.env, DEV_SERVER: '1' } });
   child.on('exit', () => { child = null; });
   if (queued) { const file = queued; queued = null; restart(file); }
 };

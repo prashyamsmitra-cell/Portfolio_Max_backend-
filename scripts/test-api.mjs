@@ -1,6 +1,7 @@
 // API tests: real handlers over HTTP, with Supabase + GitHub replaced by an in-memory fetch stub.
 // Run: node scripts/test-api.mjs
 import assert from 'node:assert/strict';
+import nodemailer from 'nodemailer';
 import { createServer } from './dev.mjs';
 
 process.env.SUPABASE_URL = 'https://fake.supabase.test';
@@ -108,6 +109,21 @@ console.log('auth + upload');
 await t('login: wrong password → 401, generic', async () => { const r = await call('/api/admin-login', { method: 'POST', body: { email: 'admin@example.com', password: 'nope' } }); assert.equal(r.status, 401); });
 await t('login: non-admin email never gets a token', async () => { const r = await call('/api/admin-login', { method: 'POST', body: { email: 'rando@example.com', password: 'right' } }); assert.equal(r.status, 401); });
 await t('login: admin → token', async () => { const j = await (await call('/api/admin-login', { method: 'POST', body: { email: 'admin@example.com', password: 'right' } })).json(); assert.equal(j.access_token, 'aaa.bbb.admin'); });
+await t('local admin login stays disabled without Supabase outside local development', async () => {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const devServer = process.env.DEV_SERVER;
+  process.env.DEV_SERVER = '0';
+  delete process.env.SUPABASE_URL;
+  let r;
+  try {
+    r = await call('/api/admin-login', { method: 'POST', body: { email: 'admin@example.com', password: 'anything' } });
+  } finally {
+    process.env.SUPABASE_URL = supabaseUrl;
+    if (devServer === undefined) delete process.env.DEV_SERVER;
+    else process.env.DEV_SERVER = devServer;
+  }
+  assert.equal(r.status, 503);
+});
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]).toString('base64');
 await t('upload requires admin', async () => assert.equal((await call('/api/upload', { method: 'POST', body: { contentType: 'image/png', data: png } })).status, 401));
 await t('upload rejects spoofed content (HTML as PNG)', async () => assert.equal((await call('/api/upload', { method: 'POST', token: 'aaa.bbb.admin', body: { contentType: 'image/png', data: Buffer.from('<script>alert(1)</script>').toString('base64') } })).status, 400));
@@ -122,6 +138,81 @@ await t('filters forks/archived, aggregates languages, never leaks the token', a
   assert.ok(seenCalls.every(c => c.auth === 'Bearer ghp_SECRET_TOKEN'), 'token sent upstream, server-side only');
 });
 await t('wrong method → 405', async () => assert.equal((await call('/api/github', { method: 'POST', body: {} })).status, 405));
+
+console.log('contact');
+await t('contact rejects non-POST requests', async () => {
+  assert.equal((await call('/api/contact', { headers: { 'x-forwarded-for': '198.51.100.1' } })).status, 405);
+});
+await t('contact validates email and message before SMTP', async () => {
+  const r = await call('/api/contact', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '198.51.100.2' },
+    body: { name: 'Guest', email: 'not-an-email', message: 'Too short' },
+  });
+  assert.equal(r.status, 400);
+});
+await t('contact reports missing SMTP configuration', async () => {
+  delete process.env.SMTP_HOST;
+  delete process.env.SMTP_USER;
+  delete process.env.SMTP_PASS;
+  delete process.env.CONTACT_EMAIL;
+  const r = await call('/api/contact', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '198.51.100.3' },
+    body: { email: 'guest@example.com', message: 'A valid message for testing.' },
+  });
+  assert.equal(r.status, 503);
+  assert.equal((await r.json()).error.code, 'email_not_configured');
+});
+const originalCreateTransport = nodemailer.createTransport;
+const sentMessages = [];
+nodemailer.createTransport = () => ({
+  sendMail: async options => { sentMessages.push(options); return { messageId: 'test' }; },
+  close() {},
+});
+process.env.SMTP_HOST = 'smtp.example.com';
+process.env.SMTP_PORT = '465';
+process.env.SMTP_USER = 'sender@example.com';
+process.env.SMTP_PASS = 'test-password';
+process.env.CONTACT_EMAIL = 'prashyams@gmail.com';
+await t('contact sends the enquiry and an escaped confirmation email', async () => {
+  const r = await call('/api/contact', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '198.51.100.4' },
+    body: { name: '<script>Guest</script>', email: 'guest@example.com', message: 'I would like to discuss a product idea.' },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(sentMessages.length, 2);
+  assert.equal(sentMessages[0].to, 'prashyams@gmail.com');
+  assert.equal(sentMessages[0].replyTo, 'guest@example.com');
+  assert.ok(sentMessages[0].html.includes('&lt;script&gt;Guest&lt;/script&gt;'));
+  assert.equal(sentMessages[1].to, 'guest@example.com');
+  assert.equal(sentMessages[1].subject, 'Thanks for reaching out');
+});
+await t('contact honeypot accepts without sending mail', async () => {
+  const before = sentMessages.length;
+  const r = await call('/api/contact', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '198.51.100.5' },
+    body: { email: 'bot@example.com', message: 'A valid message from a bot.', website: 'spam' },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(sentMessages.length, before);
+});
+await t('contact reports SMTP delivery failures', async () => {
+  nodemailer.createTransport = () => ({
+    sendMail: async () => { throw Object.assign(new Error('SMTP unavailable'), { code: 'ECONNECTION' }); },
+    close() {},
+  });
+  const r = await call('/api/contact', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '198.51.100.6' },
+    body: { email: 'guest@example.com', message: 'A valid message for testing.' },
+  });
+  assert.equal(r.status, 502);
+  assert.equal((await r.json()).error.code, 'email_delivery_failed');
+});
+nodemailer.createTransport = originalCreateTransport;
 
 console.log('cors & cross-origin security');
 await t('OPTIONS preflight from allowed origin returns 204 with CORS headers', async () => {

@@ -6,12 +6,16 @@
   "description": "Serverless API backend for portfolio: GitHub proxy, Supabase-backed posts, admin auth, photo uploads, CORS.",
   "scripts": {
     "dev": "node scripts/watch.mjs",
-    "serve": "node scripts/dev.mjs",
+    "serve": "node scripts/start.mjs",
+    "serve:local": "node scripts/local-server.mjs",
     "test": "node scripts/test-api.mjs",
     "seed:posts": "node scripts/seed-posts.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "nodemailer": "^10.1.0"
   },
   "devDependencies": {
     "chokidar": "^5.0.0"

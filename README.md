@@ -9,7 +9,7 @@ Provides REST API endpoints for:
 - **Photo upload endpoint** (`/api/upload`): image validation via magic-bytes (PNG, JPEG, WebP) and storage in Supabase Storage `post-covers` bucket (or local filesystem in dev mode).
 - **Cross-Origin Resource Sharing (CORS)**: preflight `OPTIONS` handling, explicit origin allow-list validation, and `Cross-Origin-Resource-Policy: cross-origin` headers.
 
-No runtime npm dependencies. Runs on Node.js 20+.
+Uses Node.js built-ins plus Nodemailer for SMTP contact email. Runs on Node.js 20+.
 
 ---
 
@@ -19,6 +19,7 @@ No runtime npm dependencies. Runs on Node.js 20+.
 portfolio-backend/
 ├── api/
 │   ├── admin-login.js           # POST /api/admin-login
+│   ├── contact.js               # POST /api/contact (SMTP enquiry + confirmation)
 │   ├── github.js                # GET /api/github
 │   ├── posts.js                 # GET, POST, PATCH, DELETE /api/posts
 │   ├── upload.js                # POST /api/upload
@@ -31,7 +32,9 @@ portfolio-backend/
 ├── data/
 │   └── posts.json               # Local development fallback post store
 ├── scripts/
-│   ├── dev.mjs                  # Zero-dependency local server (port 3001)
+│   ├── dev.mjs                  # HTTP server handlers (port 3001)
+│   ├── local-server.mjs         # Local server with JSON-file writes and local admin auth
+│   ├── start.mjs                # Production server (local writes and auth disabled)
 │   ├── watch.mjs                # File watcher restarting dev.mjs on changes
 │   ├── test-api.mjs             # 28 HTTP and CORS tests (in-memory stubs)
 │   └── seed-posts.mjs           # One-off database seeder
@@ -68,6 +71,13 @@ All variables are **server-side only** and must never be exposed to the browser.
 | `ADMIN_EMAILS` | Prod | Comma-separated email allow-list. Only matching emails receive admin tokens. Fail closed (empty = nobody can write). |
 | `ADMIN_PASSWORD` | Local only | Optional password accepted by `/api/admin-login` during local dev when Supabase is unconfigured. |
 | `ADMIN_SESSION_SECRET` | Local only | HMAC secret key used to sign local dev tokens. Defaults to a dev string if unset. |
+| `SMTP_HOST` | Contact form | SMTP server hostname (Gmail: `smtp.gmail.com`). |
+| `SMTP_PORT` | Contact form | SMTP port (Gmail SSL: `465`, STARTTLS: `587`). Defaults to `465`. |
+| `SMTP_SECURE` | Contact form | `true` for implicit TLS (port 465); `false` for STARTTLS (port 587). |
+| `SMTP_USER` | Contact form | SMTP account username / sending address. |
+| `SMTP_PASS` | Contact form | SMTP password or provider app password. Keep it secret. |
+| `CONTACT_EMAIL` | Contact form | Inbox that receives visitor enquiries. |
+| `SMTP_FROM` | No | Optional approved sender address; defaults to `SMTP_USER`. |
 
 ---
 
@@ -86,14 +96,18 @@ All variables are **server-side only** and must never be exposed to the browser.
 
 3. Alternatively, run without the watcher:
    ```bash
-   npm run serve
+   npm run serve:local
    ```
 
 4. Run the automated test suite:
    ```bash
    npm test
    ```
-   Executes 28 tests covering public reads, admin CRUD, authentication, file uploads, GitHub rate-limiting, and CORS origin verification.
+   Runs HTTP-level tests for public reads, admin CRUD, authentication, uploads, GitHub rate-limiting, SMTP contact mail, and CORS.
+
+The public contact endpoint sends the enquiry to `CONTACT_EMAIL` and a confirmation to the visitor using SMTP. It does not use Supabase. For Gmail, enable 2-Step Verification and create an App Password for `SMTP_PASS`; do not use your regular Google password. The endpoint limits each IP to five requests per hour and rejects invalid or oversized submissions.
+
+The production `npm run serve` command explicitly disables the local JSON post store and local admin sign-in. Use `npm run dev` or `npm run serve:local` only for local development.
 
 ---
 
@@ -126,7 +140,17 @@ When deployed separately from the frontend, browser security requires cross-orig
 
 ---
 
-## Deployment (Vercel)
+## Deployment
+
+### Render Web Service
+
+For a repository containing both the frontend and backend, set the Render service root directory to `portfolio-backend`.
+
+1. Set the **Build Command** to `npm ci`.
+2. Set the **Start Command** to `npm run serve`.
+3. Add the required service environment variables in Render. Set `ALLOWED_ORIGINS` to the exact deployed frontend origin, and configure the SMTP variables to enable contact messages.
+
+### Vercel
 
 1. Create a new project in Vercel pointing to the `portfolio-backend` repository.
 2. Under **Project Settings → Environment Variables**, add the production variables listed above (`ALLOWED_ORIGINS`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAILS`, `GITHUB_TOKEN`, etc.).

@@ -1,5 +1,5 @@
-// Zero-dependency dev server for backend: mounts /api/* handlers and serves /uploads/*.
-// Usage: node scripts/dev.mjs   (reads .env if present; PORT defaults to 3001)
+// Backend HTTP server: mounts /api/* handlers and serves /uploads/*.
+// Usage: node scripts/dev.mjs (reads .env if present; PORT defaults to 3001)
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
@@ -13,9 +13,6 @@ if (existsSync(join(root, '.env'))) {
     if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].trim();
   }
 }
-// Tells the API layer it may write local posts/uploads and mint local admin tokens.
-process.env.DEV_SERVER = '1';
-
 const MIME = {
   '.json': 'application/json',
   '.png': 'image/png',
@@ -82,7 +79,11 @@ export function createServer() {
   });
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function listen() {
   const port = Number(process.env.PORT) || 3001;
-  createServer().listen(port, () => console.log(`Backend server running at http://localhost:${port}`));
+  return createServer().listen(port, () => console.log(`Backend server running at http://localhost:${port}`));
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  listen();
 }
